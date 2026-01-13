@@ -1,4 +1,5 @@
 plugins {
+    id "java-library"
     id "org.jetbrains.kotlin.jvm"
 }
 
@@ -6,7 +7,72 @@ kotlin {
     jvmToolchain(11)
 }
 
-tasks.register("moduleJar", Jar) {
-    archiveFileName = "module.jar"
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib"
+}
+
+def getSdkDir() {
+    def propsFile = rootProject.file("local.properties")
+    if (!propsFile.exists()) {
+        throw new GradleException("local.properties not found in root. Please create it with sdk.dir=... ")
+    }
+    def p = new Properties()
+    propsFile.withInputStream { p.load(it) }
+    def sdkDir = p.getProperty("sdk.dir")
+    if (sdkDir == null || sdkDir.trim().isEmpty()) {
+        throw new GradleException("sdk.dir is missing in local.properties")
+    }
+    return file(sdkDir)
+}
+
+def findLatestBuildTools(File sdkDir) {
+    def btDir = new File(sdkDir, "build-tools")
+    if (!btDir.exists()) throw new GradleException("Android build-tools folder not found: ${btDir}")
+    def versions = btDir.listFiles()?.findAll { it.isDirectory() }?.collect { it.name } ?: []
+    if (versions.isEmpty()) throw new GradleException("No build-tools installed. Install via SDK Manager.")
+    versions.sort { a, b -> a <=> b }
+    return versions.last()
+}
+
+def d8Executable(File sdkDir, String buildToolsVersion) {
+    def exeName = org.gradle.internal.os.OperatingSystem.current().isWindows() ? "d8.bat" : "d8"
+    def exe = new File(new File(new File(sdkDir, "build-tools"), buildToolsVersion), exeName)
+    if (!exe.exists()) throw new GradleException("d8 not found: ${exe}")
+    return exe.absolutePath
+}
+
+tasks.register("plainJar", Jar) {
+    archiveFileName = "plain.jar"
     from(sourceSets.main.output)
+}
+
+tasks.register("dexModule", Exec) {
+    dependsOn("plainJar")
+
+    def sdkDir = getSdkDir()
+    def btVersion = findLatestBuildTools(sdkDir)
+    def d8Path = d8Executable(sdkDir, btVersion)
+
+    def inputJar = layout.buildDirectory.file("libs/plain.jar").get().asFile.absolutePath
+    def outDir = layout.buildDirectory.dir("dex").get().asFile.absolutePath
+
+    doFirst {
+        file(outDir).mkdirs()
+        println("Using SDK: ${sdkDir}")
+        println("Using Build-Tools: ${btVersion}")
+        println("Using d8: ${d8Path}")
+    }
+
+    commandLine d8Path,
+            "--min-api", "24",
+            "--output", outDir,
+            inputJar
+}
+
+tasks.register("moduleJar", Jar) {
+    dependsOn("dexModule")
+    archiveFileName = "module.jar"
+    from(layout.buildDirectory.dir("dex")) {
+        include "classes.dex"
+    }
 }

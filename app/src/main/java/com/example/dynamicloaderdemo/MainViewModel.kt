@@ -19,7 +19,11 @@ class MainViewModel(
     fun start() {
         if (repository.isAlreadyExecuted()) {
             val last = repository.getLastResultOrNull()
-            _state.value = UiState.AlreadyExecuted(last ?: "Module already executed")
+            _state.value = if (last != null) {
+                UiState.AlreadyExecuted(last.first, last.second)
+            } else {
+                UiState.AlreadyExecuted("Already executed", "")
+            }
             return
         }
 
@@ -27,25 +31,34 @@ class MainViewModel(
 
         viewModelScope.launch {
             try {
-                val jarFile = withContext(Dispatchers.IO) {
-                    repository.downloadModuleJar(moduleUrl)
+                val jarBytes = withContext(Dispatchers.IO) {
+                    repository.downloadModuleJarBytes(moduleUrl)
                 }
 
-                val result = withContext(Dispatchers.IO) {
-                    repository.runModuleFromJar(jarFile)
+                val rawResult = withContext(Dispatchers.IO) {
+                    repository.runModuleFromJarBytes(jarBytes)
                 }
 
-                _state.value = UiState.Result(result)
+                val (deviceLine, dateLine) = splitToTwoLines(rawResult)
 
-                withContext(Dispatchers.IO) {
-                    repository.deleteJar(jarFile)
-                }
+                _state.value = UiState.Result(deviceLine, dateLine)
 
-                repository.markExecuted(result)
+                repository.markExecuted(deviceLine, dateLine)
 
             } catch (e: Exception) {
                 _state.value = UiState.Error(e.message ?: "Unknown error")
             }
+        }
+    }
+
+    private fun splitToTwoLines(raw: String): Pair<String, String> {
+        val idx = raw.lastIndexOf(" - ")
+        return if (idx > 0 && idx + 3 < raw.length) {
+            val device = raw.substring(0, idx).trim()
+            val date = raw.substring(idx + 3).trim()
+            device to date
+        } else {
+            raw to ""
         }
     }
 }
