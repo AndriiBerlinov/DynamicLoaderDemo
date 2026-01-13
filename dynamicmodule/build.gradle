@@ -1,0 +1,12 @@
+plugins {
+    id "org.jetbrains.kotlin.jvm"
+}
+
+kotlin {
+    jvmToolchain(11)
+}
+
+tasks.register("moduleJar", Jar) {
+    archiveFileName = "module.jar"
+    from(sourceSets.main.output)
+}
